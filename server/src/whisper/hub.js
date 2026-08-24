@@ -32,6 +32,14 @@ import {
   tvView,
   playerView,
 } from './state.js'
+import {
+  rollDice as rollDiceEngine,
+  mgInput as mgInputEngine,
+  useItem as useItemEngine,
+  haunt as hauntEngine,
+  mansionTick as mansionTickEngine,
+  drainEvents,
+} from '../mansion/engine.js'
 import { LIMITS } from './content.js'
 import { config } from '../config.js'
 import logger from '../utils/logger.js'
@@ -153,12 +161,21 @@ export function attachWhisperHub({ wss }) {
         room._tvLostAt = null
       }
 
+      if (room.settings.mode === 'mansion' && room.match) {
+        // The board engine owns its own phase deadlines and turn loop.
+        const events = mansionTickEngine(room, now)
+        for (const ev of events) emitEvent(room, { ...ev })
+        if (events.length) syncRoomThrottled(room, now)
+        continue
+      }
+
       if (
         room.phaseEndsAt &&
         now >= room.phaseEndsAt &&
         ['intro', 'secrets', 'whisper', 'omen', 'vote'].includes(room.phase)
       ) {
         doAdvance(room, now)
+        continue
       }
 
       // Safety valve: abandoned lobby rooms eventually die.
@@ -167,6 +184,15 @@ export function attachWhisperHub({ wss }) {
       }
     }
   }, TICK_MS)
+
+  /** Minigame simulation changes state every tick — cap snapshot spam. */
+  const lastMansionSync = new Map() // code -> ts
+  function syncRoomThrottled(room, now) {
+    const last = lastMansionSync.get(room.code) ?? 0
+    if (now - last < 450) return
+    lastMansionSync.set(room.code, now)
+    syncRoom(room)
+  }
 
   const heartbeat = setInterval(() => {
     for (const [ws, conn] of conns.entries()) {
@@ -193,6 +219,7 @@ export function attachWhisperHub({ wss }) {
       if (closed.ok) deliver(room, closed)
     }
     emitEvent(room, effects.event)
+    for (const ev of effects.mansionEvents ?? []) emitEvent(room, { ...ev })
     syncRoom(room)
   }
 
@@ -281,10 +308,13 @@ export function attachWhisperHub({ wss }) {
       if (!room || conn.kind !== 'tv') return error_(ws, 'forbidden', 'Only the shared screen starts the ritual.')
       const res = startGame(room, sanitizeSettings(msg?.settings))
       if (res.error) {
-        const messages = { need_players: `Gather ${LIMITS.minPlayers} players first.` }
+        const messages = { need_players: `Gather ${LIMITS.minPlayers}–${LIMITS.maxPlayers} players first.` }
         return error_(ws, res.error, messages[res.error] ?? 'Cannot start.')
       }
-      emitEvent(room, { kind: 'game_start' })
+      emitEvent(room, { kind: 'game_start', mode: room.settings.mode })
+      if (room.match) {
+        for (const ev of drainEvents(room.match)) emitEvent(room, { ...ev })
+      }
       syncRoom(room)
     },
 
@@ -373,6 +403,70 @@ export function attachWhisperHub({ wss }) {
       syncRoom(room)
     },
 
+    /* ---------------- mansion board mode ---------------- */
+
+    roll(ws, conn) {
+      const room = roomOf(conn)
+      if (!room || conn.kind !== 'player') return error_(ws, 'forbidden', 'Not seated.')
+      const res = rollDiceEngine(room, conn.playerId)
+      if (res.error) {
+        const messages = {
+          not_board_phase: 'The board is still.',
+          not_your_turn: 'It is not your turn yet.',
+          already_rolled: 'The dice have spoken.',
+        }
+        return error_(ws, res.error, messages[res.error] ?? res.error)
+      }
+      for (const ev of drainEvents(room.match)) emitEvent(room, { ...ev })
+      syncRoom(room)
+    },
+
+    mg_input(ws, conn, msg) {
+      const room = roomOf(conn)
+      if (!room || conn.kind !== 'player') return
+      const res = mgInputEngine(room, conn.playerId, msg.data)
+      if (res.error) {
+        // High-frequency inputs: walls/eliminations are normal play, stay quiet.
+        const quiet = ['wall', 'already_caught', 'done_or_missing', 'bad_input']
+        if (!quiet.includes(res.error)) return error_(ws, res.error, 'The house ignores that.')
+        return
+      }
+      if (room.settings.mode === 'mansion') syncRoomThrottled(room, Date.now())
+    },
+
+    item_use(ws, conn, msg) {
+      const room = roomOf(conn)
+      if (!room || conn.kind !== 'player') return error_(ws, 'forbidden', 'Not seated.')
+      const res = useItemEngine(room, conn.playerId, String(msg.itemId ?? ''), msg.targetId)
+      if (res.error) {
+        const messages = {
+          not_your_turn: 'Wait for your turn.',
+          too_late_for_items: 'Too late — the dice already rolled.',
+          not_owned: 'You carry no such thing.',
+          bad_target: 'Choose someone else.',
+        }
+        return error_(ws, res.error, messages[res.error] ?? res.error)
+      }
+      for (const ev of drainEvents(room.match)) emitEvent(room, { ...ev })
+      syncRoom(room)
+    },
+
+    haunt(ws, conn, msg) {
+      const room = roomOf(conn)
+      if (!room || conn.kind !== 'player') return error_(ws, 'forbidden', 'Not seated.')
+      const res = hauntEngine(room, conn.playerId, msg.targetId)
+      if (res.error) {
+        const messages = {
+          nothing_to_haunt: 'No one within reach.',
+          not_same_space: 'They must stand where you drift.',
+          bad_target: 'Choose the living.',
+        }
+        return error_(ws, res.error, messages[res.error] ?? res.error)
+      }
+      for (const ev of drainEvents(room.match)) emitEvent(room, { ...ev })
+      syncRoom(room)
+    },
+
     ping(ws, conn, msg) {
       send(ws, { t: 'pong', ts: Number(msg.ts) || Date.now(), now: Date.now() })
     },
@@ -445,8 +539,28 @@ export function attachWhisperHub({ wss }) {
     flushTimers: () => {
       const now = Date.now()
       for (const room of rooms.values()) {
+        if (room.settings.mode === 'mansion' && room.match) {
+          for (const ev of mansionTickEngine(room, now)) emitEvent(room, { ...ev })
+          continue
+        }
         if (room.phaseEndsAt && now >= room.phaseEndsAt) doAdvance(room, now)
       }
+    },
+    /**
+     * Test/debug helper: sweep a mansion room's clock forward by `ms`,
+     * ticking the engine every TICK_MS so movement/minigames progress.
+     */
+    stepMansion: (code, ms = 1000) => {
+      const room = rooms.get(code)
+      if (!room?.match) return []
+      const events = []
+      const end = Date.now() + ms
+      for (let t = Date.now(); t <= end; t += TICK_MS) {
+        events.push(...mansionTickEngine(room, Math.min(t, end)))
+      }
+      for (const ev of events) emitEvent(room, { ...ev })
+      syncRoom(room)
+      return events
     },
   }
 }

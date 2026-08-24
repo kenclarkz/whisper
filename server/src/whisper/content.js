@@ -6,7 +6,7 @@
  */
 
 export const LIMITS = {
-  minPlayers: 3,
+  minPlayers: 2,
   maxPlayers: 8,
   nameMin: 1,
   nameMax: 14,

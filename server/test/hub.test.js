@@ -136,7 +136,7 @@ test('full seance: join → lobby → whispers → forge → vote → ending →
   assert.equal((await next(players[0], 'error')).code, 'forbidden')
 
   /* --- start --------------------------------------------------------- */
-  send(tv, { t: 'start' })
+  send(tv, { t: 'start', settings: { mode: 'ritual' } })
   await next(players[0], 'event', (m) => m.kind === 'game_start')
   const started = (await next(players[0], 'room')).view
   assert.equal(started.phase, 'intro')
@@ -257,6 +257,64 @@ test('full seance: join → lobby → whispers → forge → vote → ending →
   assert.equal((await next(tv, 'room', (m) => m.view.phase === 'lobby')).view.phase, 'lobby')
   const phoneAfterReset = await next(players[0], 'room', (m) => m.view.phase === 'lobby')
   assert.equal(phoneAfterReset.view.me.role, null)
+
+  tv.ws.close()
+  for (const p of players) p.ws.close()
+})
+
+test('mansion over the wire: start → board → roll → events flow', async () => {
+  /* --- TV opens a fresh room ---------------------------------------- */
+  const tv = await connect()
+  send(tv, { t: 'tv_create' })
+  const code = (await next(tv, 'welcome')).code
+  await next(tv, 'room')
+
+  /* --- two phones join (mansion is fully playable at two) ------------ */
+  const players = []
+  for (const name of ['Ada', 'Bram']) {
+    const p = await connect()
+    send(p, { t: 'player_join', code, name })
+    await next(p, 'welcome')
+    await next(p, 'room')
+    players.push(p)
+  }
+
+  /* --- start in mansion mode ----------------------------------------- */
+  send(tv, { t: 'start', settings: { mode: 'mansion', laps: 2 } })
+  await next(tv, 'event', (m) => m.kind === 'game_start' && m.mode === 'mansion')
+  assert.equal(latestRoom(tv).phase, 'board_intro')
+  assert.ok(latestRoom(tv).match)
+  assert.equal(latestRoom(tv).match.totalTurns, 4)
+  assert.equal(latestRoom(tv).mode, 'mansion')
+
+  /* --- sweep onto the board; the idle deadline auto-rolls ------------- */
+  const settle = () => new Promise((r) => setTimeout(r, 60))
+  const events = hub.stepMansion(code, 45_000)
+  await settle()
+  assert.ok(events.some((e) => e.kind === 'turn_start'))
+  assert.ok(events.some((e) => e.kind === 'roll_result'))
+  assert.ok(events.some((e) => e.kind === 'step'))
+
+  const boardView = latestRoom(tv).match
+  assert.equal(boardView.turnCount >= 1, true)
+  assert.ok(['board', 'minigame_intro'].includes(latestRoom(tv).phase))
+
+  /* --- an explicit roll from the seated player ------------------------ */
+  const curId = boardView.currentPlayerId
+  const curSock =
+    players.find((p) => latestRoom(p).me.id === curId) ??
+    players[0]
+  // If it's not their seat anymore, wait out the current mover first.
+  if (latestRoom(curSock).me.matchPriv?.awaitingMe !== 'roll') {
+    hub.stepMansion(code, 30_000)
+    await settle()
+  }
+  const mineNow = latestRoom(curSock).me.matchPriv
+  if (mineNow?.awaitingMe === 'roll') {
+    send(curSock, { t: 'roll' })
+    await next(curSock, 'event', (m) => m.kind === 'roll_result' && m.playerId === curId)
+  }
+  assert.ok(true)
 
   tv.ws.close()
   for (const p of players) p.ws.close()

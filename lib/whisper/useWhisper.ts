@@ -8,6 +8,7 @@ import {
 } from './client'
 import {
   resolveSocketUrl,
+  type MgInputData,
   type PlayerView,
   type ServerMessage,
   type TvView,
@@ -176,6 +177,23 @@ export function useWhisperGame() {
     [send]
   )
 
+  /* ---------------- mansion board actions ---------------- */
+
+  const roll = useCallback(() => send({ t: 'roll' }), [send])
+  const mgInput = useCallback(
+    (data: MgInputData) => send({ t: 'mg_input', data }),
+    [send]
+  )
+  const useItem = useCallback(
+    (itemId: string, targetId?: string) =>
+      send({ t: 'item_use', itemId, ...(targetId ? { targetId } : {}) }),
+    [send]
+  )
+  const haunt = useCallback(
+    (targetId?: string) => send({ t: 'haunt', ...(targetId ? { targetId } : {}) }),
+    [send]
+  )
+
   const markInboxRead = useCallback(() => {
     setPlayerView((v) =>
       v ? { ...v, me: { ...v.me, unread: 0 } } : v
@@ -212,6 +230,10 @@ export function useWhisperGame() {
       cancelWhisper,
       forge,
       castVote,
+      roll,
+      mgInput,
+      useItem,
+      haunt,
       markInboxRead,
       leave,
     },

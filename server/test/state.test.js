@@ -32,6 +32,11 @@ function setup(n = 3) {
   return { room, players }
 }
 
+/** These suites exercise the original whisper ritual; default is now mansion. */
+function startRitual(room) {
+  return startGame(room, { mode: 'ritual' })
+}
+
 describe('rooms & joining', () => {
   it('rejects bad and duplicate names', () => {
     const room = createRoom('TEST')
@@ -52,7 +57,7 @@ describe('rooms & joining', () => {
 
   it('refuses joins once the ritual has begun', () => {
     const { room } = setup(3)
-    startGame(room)
+    startRitual(room)
     assert.equal(addPlayer(room, 'Late').error, 'game_in_progress')
   })
 })
@@ -60,7 +65,7 @@ describe('rooms & joining', () => {
 describe('roles & secrets', () => {
   it('crown exactly one Whisperer with unique innocent secrets', () => {
     const { room, players } = setup(5)
-    assert.equal(startGame(room).error, undefined)
+    assert.equal(startRitual(room).error, undefined)
     const whisperers = players.filter((p) => p.role === 'whisperer')
     assert.equal(whisperers.length, 1)
 
@@ -77,9 +82,12 @@ describe('roles & secrets', () => {
     }
   })
 
-  it('needs three players minimum', () => {
-    const { room } = setup(2)
-    assert.equal(startGame(room).error, 'need_players')
+  it('needs two players minimum', () => {
+    const { room } = setup(1)
+    assert.equal(startRitual(room).error, 'need_players')
+    // Two players are enough to play — the séance and the mansion both.
+    const duo = setup(2)
+    assert.equal(startRitual(duo.room).error, undefined)
   })
 })
 
@@ -87,7 +95,7 @@ describe('whispering', () => {
   let ctx
   beforeEach(() => {
     ctx = setup(3)
-    startGame(ctx.room)
+    startRitual(ctx.room)
     advance(ctx.room) // intro -> secrets
     advance(ctx.room) // secrets -> whisper round 1
     assert.equal(ctx.room.phase, 'whisper')
@@ -192,7 +200,7 @@ describe('whispering', () => {
 describe('the forged tongue', () => {
   it('arrives disguised as an innocent and is once-per-round', () => {
     const { room, players } = setup(4)
-    startGame(room)
+    startRitual(room)
     advance(room)
     advance(room)
     assert.equal(room.phase, 'whisper')
@@ -220,7 +228,7 @@ describe('the forged tongue', () => {
 
   it('refuses non-whisperers and empty bodies', () => {
     const { room, players } = setup(3)
-    startGame(room)
+    startRitual(room)
     advance(room)
     advance(room)
     const innocent = players.find((p) => p.role === 'innocent')
@@ -237,7 +245,7 @@ describe('judgement', () => {
 
   it('banishing the Whisperer yields THE SILENCE', () => {
     const { room, players } = setup(3)
-    startGame(room)
+    startRitual(room)
     const w = players.find((p) => p.role === 'whisperer')
     toVote(room)
     for (const p of players) castVote(room, p.id, w.id)
@@ -250,7 +258,7 @@ describe('judgement', () => {
 
   it('ties and abstention free the Hollow', () => {
     const { room, players } = setup(4)
-    startGame(room)
+    startRitual(room)
     const w = players.find((p) => p.role === 'whisperer')
     const innocents = players.filter((p) => p !== w)
     toVote(room)
@@ -266,7 +274,7 @@ describe('judgement', () => {
 
   it('votes outside the vote phase are refused', () => {
     const { room, players } = setup(3)
-    startGame(room)
+    startRitual(room)
     assert.equal(castVote(room, players[0].id, null).error, 'not_vote_phase')
   })
 })
@@ -274,7 +282,7 @@ describe('judgement', () => {
 describe('privacy firewall', () => {
   it('snapshots never leak roles, secrets or inbox text', () => {
     const { room, players } = setup(5)
-    startGame(room)
+    startRitual(room)
     const [a, b] = players
     openWhisper(room, a.id, b.id)
     chunkWhisper(room, a.id, 'SECRET-TEXT-XYZ')
@@ -306,7 +314,7 @@ describe('privacy firewall', () => {
 
   it('reveals roles only at the ending', () => {
     const { room, players } = setup(3)
-    startGame(room)
+    startRitual(room)
     for (const p of players) castVote(room, p.id, players[0].id)
     finishVote(room)
     const tv = tvView(room)
@@ -318,7 +326,7 @@ describe('privacy firewall', () => {
 describe('play again', () => {
   it('returns to a clean lobby keeping identities', () => {
     const { room, players } = setup(3)
-    startGame(room)
+    startRitual(room)
     resetToLobby(room)
     assert.equal(room.phase, 'lobby')
     assert.equal(room.outcome, null)

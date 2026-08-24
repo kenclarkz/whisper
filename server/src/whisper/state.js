@@ -17,6 +17,14 @@ import {
   OBJECTIVES,
   OMENS,
 } from './content.js'
+import {
+  createMatch as createMansionMatch,
+  resetMatch as resetMansionMatch,
+  mansionAdvance as mansionAdvanceFn,
+  mansionTick as mansionTickFn,
+  matchPublic,
+  matchPrivate,
+} from '../mansion/engine.js'
 
 export const FIXED_DURATIONS = {
   intro: 16000,
@@ -25,7 +33,8 @@ export const FIXED_DURATIONS = {
 }
 
 export const DEFAULT_SETTINGS = {
-  rounds: 3,
+  mode: 'mansion', // 'mansion' (board party) | 'ritual' (whisper deduction)
+  rounds: 3, // ritual: whisper rounds · mansion: laps per player
   roundSeconds: 75,
   voteSeconds: 40,
 }
@@ -105,8 +114,11 @@ export function createRoom(code, settings = {}) {
 
 export function sanitizeSettings(input = {}) {
   const s = {}
+  if (input.mode === 'mansion' || input.mode === 'ritual') s.mode = input.mode
   const rounds = Number(input.rounds)
   if ([2, 3, 4].includes(rounds)) s.rounds = rounds
+  const laps = Number(input.laps)
+  if ([2, 3, 4].includes(laps)) s.laps = laps
   const secs = Number(input.roundSeconds)
   if ([45, 60, 75, 90].includes(secs)) s.roundSeconds = secs
   const vs = Number(input.voteSeconds)
@@ -169,6 +181,14 @@ export function startGame(room, settingsInput = {}) {
   if (room.players.length < LIMITS.minPlayers) return { error: 'need_players' }
   Object.assign(room.settings, sanitizeSettings(settingsInput))
 
+  if (room.settings.mode === 'mansion') {
+    return createMansionMatch(room, room.settings)
+  }
+  return startRitual(room)
+}
+
+/** The original whisper-ritual social deduction mode. */
+function startRitual(room) {
   const order = shuffle(room.players)
   order.forEach((p, i) => {
     p.role = i === 0 ? 'whisperer' : 'innocent'
@@ -246,6 +266,15 @@ function enterPhase(room, phase, now = Date.now()) {
  * phase deadline expires or the TV forces an advance.
  */
 export function advance(room, now = Date.now()) {
+  if (room.settings.mode === 'mansion') {
+    // The mansion engine owns its phases; the hub drains its events.
+    const events = mansionAdvanceFn(room, now)
+    return { closed: [], event: null, mansionEvents: events }
+  }
+  return advanceRitual(room, now)
+}
+
+function advanceRitual(room, now = Date.now()) {
   const effects = { closed: [] }
 
   switch (room.phase) {
@@ -526,6 +555,7 @@ export function resetToLobby(room) {
   room.outcome = null
   room.feed = []
   room.omenLine = ''
+  resetMansionMatch(room)
   room._openWhispers.clear()
   room._forgedThisRound = new Set()
   for (const p of room.players) {
@@ -576,6 +606,7 @@ function publicPlayer(p) {
  * `whisper_in` messages routed by closeWhisper/forgeWhisper.
  */
 export function playerView(room, player, now = Date.now()) {
+  const isMansion = room.settings.mode === 'mansion'
   return {
     code: room.code,
     phase: room.phase,
@@ -585,7 +616,9 @@ export function playerView(room, player, now = Date.now()) {
     now,
     roundSeconds: room.settings.roundSeconds,
     voteSeconds: room.settings.voteSeconds,
+    mode: room.settings.mode,
     players: room.players.map(publicPlayer),
+    match: isMansion ? matchPublic(room, now) : null,
     me: {
       id: player.id,
       name: player.name,
@@ -612,7 +645,10 @@ export function playerView(room, player, now = Date.now()) {
       epilogue:
         room.phase === 'ending' && room.outcome
           ? epilogueFor(player, room.outcome)
-          : null,
+          : isMansion && room.phase === 'results'
+            ? (matchPrivate(room, player, now)?.epilogue ?? null)
+            : null,
+      matchPriv: isMansion ? matchPrivate(room, player, now) : null,
     },
     publicStats: {
       whispersDelivered: countDelivered(room),
@@ -634,6 +670,7 @@ export function playerView(room, player, now = Date.now()) {
 /** Snapshot for the shared screen. Public information only. */
 export function tvView(room, now = Date.now()) {
   const outcome = room.outcome
+  const isMansion = room.settings.mode === 'mansion'
   return {
     code: room.code,
     phase: room.phase,
@@ -641,10 +678,12 @@ export function tvView(room, now = Date.now()) {
     round: room.round,
     rounds: room.settings.rounds,
     now,
+    mode: room.settings.mode,
     settings: room.settings,
     players: room.players.map(publicPlayer),
     feed: room.feed.slice(-6),
     omenLine: room.phase === 'omen' ? room.omenLine : '',
+    match: isMansion ? matchPublic(room, now) : null,
     publicStats: {
       whispersDelivered: countDelivered(room),
       dread: room.dread,
@@ -659,13 +698,13 @@ export function tvView(room, now = Date.now()) {
             wasTie: outcome.wasTie,
           }
         : null,
-    /** Reveal roles only at the very end. */
+    /** Reveal roles only at the very end (ritual mode only). */
     reveal:
-      room.phase === 'ending'
+      !isMansion && room.phase === 'ending'
         ? room.players.map((p) => ({ id: p.id, name: p.name, role: p.role }))
         : null,
     epilogues:
-      room.phase === 'ending'
+      !isMansion && room.phase === 'ending'
         ? room.players.map((p) => ({
             name: p.name,
             role: p.role,

@@ -11,6 +11,8 @@ import { MicButton } from './MicButton'
 import { ForgeModal } from './ForgeModal'
 import { WhisperInbox } from './WhisperInbox'
 import { PHASE_LABELS } from '@/data/whisper'
+import { PhoneBoard } from './phone/PhoneBoard'
+import { PhoneMinigame } from './phone/PhoneMinigame'
 
 export function PhoneStage({ game }: { game: WhisperGame }) {
   const view = game.playerView
@@ -38,19 +40,74 @@ export function PhoneStage({ game }: { game: WhisperGame }) {
     )
   }
 
+  const priv = view.me.matchPriv
+  const isMansion = view.mode === 'mansion'
+  const inMansionBoard =
+    isMansion &&
+    (view.phase === 'board' ||
+      view.phase === 'board_intro' ||
+      view.phase === 'minigame_intro' ||
+      view.phase === 'minigame' ||
+      view.phase === 'minigame_results')
+
   return (
     <Shell>
       <TopBar view={view} game={game} />
-      <main className="mx-auto w-full max-w-md flex-1 px-4 pb-44">
-        {view.phase === 'lobby' && <Lobby view={view} />}
-        {view.phase === 'intro' && <Intro />}
-        {view.phase === 'secrets' && <Secrets view={view} />}
-        {view.phase === 'whisper' && <Whispering view={view} game={game} />}
-        {view.phase === 'omen' && <Omen view={view} />}
-        {view.phase === 'vote' && <Voting view={view} game={game} />}
-        {view.phase === 'ending' && <Ending view={view} game={game} />}
-      </main>
+      {inMansionBoard && view.match ? (
+        view.phase === 'board' && priv ? (
+          <PhoneBoard view={view} match={view.match} priv={priv} game={game} />
+        ) : view.phase === 'minigame' && view.match.mg ? (
+          <PhoneMinigame view={view} mg={view.match.mg} priv={priv!} game={game} />
+        ) : (
+          <MansionInterstitial phase={view.phase} mgName={view.match.mg?.name} />
+        )
+      ) : (
+        <main className="mx-auto w-full max-w-md flex-1 px-4 pb-44">
+          {view.phase === 'lobby' && <Lobby view={view} />}
+          {view.phase === 'intro' && <Intro />}
+          {view.phase === 'secrets' && <Secrets view={view} />}
+          {view.phase === 'whisper' && <Whispering view={view} game={game} />}
+          {view.phase === 'omen' && <Omen view={view} />}
+          {view.phase === 'vote' && <Voting view={view} game={game} />}
+          {view.phase === 'ending' && <Ending view={view} game={game} />}
+          {view.phase === 'results' && <MansionEnding view={view} />}
+        </main>
+      )}
     </Shell>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Mansion interstitials                                               */
+/* ------------------------------------------------------------------ */
+
+function MansionInterstitial({ phase, mgName }: { phase: string; mgName?: string }) {
+  useEffect(() => {
+    getAudio().knock(1)
+  }, [])
+  return (
+    <main className="mx-auto grid w-full max-w-md flex-1 place-items-center px-6 text-center">
+      <div>
+        {phase === 'minigame_intro' || phase === 'minigame_results' ? (
+          <>
+            <Sparkles size={38} className="animate-breathe text-hex-light" />
+            <p className="mt-5 font-display text-xl tracking-widest2">
+              {phase === 'minigame_intro' ? 'A GAME BECKONS' : 'THE HOUSE DECIDES'}
+            </p>
+            <p className="mt-2 text-sm italic text-bone-dim">
+              {mgName ?? 'Watch the television…'}
+            </p>
+          </>
+        ) : (
+          <>
+            <Ghost size={38} className="animate-breathe text-hex-light" />
+            <p className="mt-5 font-display text-lg leading-relaxed tracking-wide text-bone-dim">
+              The mansion opens its doors…
+            </p>
+          </>
+        )}
+      </div>
+    </main>
   )
 }
 
@@ -469,6 +526,42 @@ function Ending({ view, game }: { view: PlayerView; game: WhisperGame }) {
       >
         leave the house
       </button>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Mansion ending                                                      */
+/* ------------------------------------------------------------------ */
+
+function MansionEnding({ view }: { view: PlayerView }) {
+  const priv = view.me.matchPriv
+  const won = priv?.won
+  useEffect(() => {
+    getAudio()[won ? 'chime' : 'sting']()
+  }, [won])
+
+  return (
+    <section className="pt-10 text-center">
+      {won ? (
+        <Sparkles size={40} className="mx-auto animate-breathe text-hex-light" />
+      ) : (
+        <Ghost size={40} className="mx-auto animate-breathe text-hex" />
+      )}
+      <h1 className="mt-5 font-display text-3xl tracking-wide text-shadow-cine">
+        {won ? 'YOU ESCAPE RICHEST' : priv?.status === 'ghost' ? 'THE HOUSE KEPT YOU' : 'DAWN FINDS YOU'}
+      </h1>
+      <p className="mt-4 max-w-xs mx-auto text-sm italic leading-relaxed text-bone-dim">
+        {priv?.epilogue ?? 'The doors close behind you… or on you.'}
+      </p>
+      <p className="mt-6 font-display text-2xl tabular-nums">
+        ✦{priv?.souls ?? 0} souls carried out
+      </p>
+      {priv?.rank ? (
+        <p className="mt-1 text-xs uppercase tracking-widest2 text-bone-faint">
+          placed #{priv.rank} of {view.players.length}
+        </p>
+      ) : null}
     </section>
   )
 }

@@ -111,7 +111,7 @@ test('tokens restore identities; stale sockets are superseded', async () => {
   await next(cora, 'room')
 
   // Start so direct joins are refused from here on.
-  send(tv, { t: 'start' })
+  send(tv, { t: 'start', settings: { mode: 'ritual' } })
   await next(ada, 'event', (m) => m.kind === 'game_start')
 
   const latecomer = await connect()

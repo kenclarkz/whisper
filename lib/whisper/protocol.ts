@@ -25,10 +25,25 @@ export type ClientMessage =
   | { t: 'whisper_cancel' }
   | { t: 'forge'; toId: string; text: string }
   | { t: 'vote'; targetId: string | null }
+  /* mansion board mode */
+  | { t: 'roll' }
+  | { t: 'mg_input'; data: MgInputData }
+  | { t: 'item_use'; itemId: string; targetId?: string }
+  | { t: 'haunt'; targetId?: string }
   | { t: 'ping'; ts: number }
 
+/** Union of every minigame input the server understands. */
+export type MgInputData =
+  | { type: 'tap' }
+  | { type: 'run_on' }
+  | { type: 'run_off' }
+  | { type: 'vote'; targetId: string }
+  | { type: 'move'; dir: 'up' | 'down' | 'left' | 'right' }
+
 export interface RoomSettings {
-  rounds: number // 2..4
+  mode: 'mansion' | 'ritual'
+  laps: number // mansion: board laps per player (2..4) → turns = laps × players
+  rounds: number // ritual: whisper rounds (2..4)
   roundSeconds: number // 45|60|75|90
   voteSeconds: number // 25|40|60
 }
@@ -86,10 +101,12 @@ export interface TvView {
   round: number
   rounds: number
   now: number
+  mode: GameMode
   settings: RoomSettings
   players: PublicPlayer[]
   feed: { line: string; at: number }[]
   omenLine: string
+  match: MatchView | null
   publicStats: PublicStats
   outcome: Outcome | null
   reveal: { id: string; name: string; role: Role }[] | null
@@ -119,7 +136,9 @@ export interface PlayerView {
   now: number
   roundSeconds: number
   voteSeconds: number
+  mode: GameMode
   players: PublicPlayer[]
+  match: MatchView | null
   me: {
     id: string
     name: string
@@ -135,6 +154,7 @@ export interface PlayerView {
     voteSealed: boolean
     forgeUsed: boolean
     epilogue: string | null
+    matchPriv: MatchPrivate | null
   }
   publicStats: PublicStats
   outcome: Outcome | null
@@ -148,6 +168,13 @@ export type Phase =
   | 'omen'
   | 'vote'
   | 'ending'
+  /* mansion board mode */
+  | 'board_intro'
+  | 'board'
+  | 'minigame_intro'
+  | 'minigame'
+  | 'minigame_results'
+  | 'results'
 
 export type Role = 'innocent' | 'whisperer'
 
@@ -165,7 +192,7 @@ export interface WhisperInMsg {
 }
 
 export type GameEvent =
-  | { t: 'event'; kind: 'game_start' }
+  | { t: 'event'; kind: 'game_start'; mode?: GameMode }
   | { t: 'event'; kind: 'round_start'; round: number }
   | { t: 'event'; kind: 'omen'; line: string }
   | { t: 'event'; kind: 'vote_open' }
@@ -175,8 +202,120 @@ export type GameEvent =
   | { t: 'event'; kind: 'tv_lost' }
   | { t: 'event'; kind: 'room_replaced' }
   | { t: 'event'; kind: 'room_expired' }
+  /* mansion board mode */
+  | { t: 'event'; kind: 'match_start' }
+  | { t: 'event'; kind: 'turn_start'; playerId: string }
+  | { t: 'event'; kind: 'roll_result'; playerId: string; value: number; effective: number }
+  | { t: 'event'; kind: 'step'; playerId: string; pos: number }
+  | { t: 'event'; kind: 'space_result'; playerId: string; pos: number; type: string; text: string }
+  | { t: 'event'; kind: 'soul_gain'; playerId: string; amount: number }
+  | { t: 'event'; kind: 'item_found'; playerId: string; itemId: string }
+  | { t: 'event'; kind: 'item_used'; playerId: string; itemId: string; targetId: string | null }
+  | { t: 'event'; kind: 'cursed'; playerId: string; curse: string }
+  | { t: 'event'; kind: 'curses_cleared'; playerId: string }
+  | { t: 'event'; kind: 'mystery'; playerId: string; id: string; text: string }
+  | { t: 'event'; kind: 'horror'; id: string; text: string; stage: number }
+  | { t: 'event'; kind: 'contest'; rolls: { id: string; r: number }[] }
+  | { t: 'event'; kind: 'harm'; playerId: string; amount: number }
+  | { t: 'event'; kind: 'ward_block'; playerId: string }
+  | { t: 'event'; kind: 'swap'; a: string; b: string }
+  | { t: 'event'; kind: 'shortcut'; playerId: string }
+  | { t: 'event'; kind: 'player_dead'; playerId: string }
+  | { t: 'event'; kind: 'revived'; playerId: string }
+  | { t: 'event'; kind: 'haunt_offer'; playerId: string; targets: string[] }
+  | { t: 'event'; kind: 'haunt_steal'; ghostId: string; targetId: string }
+  | { t: 'event'; kind: 'haunt_spook'; ghostId: string; targetId: string }
+  | { t: 'event'; kind: 'stage_change'; stage: number; name: string }
+  | { t: 'event'; kind: 'minigame_soon' }
+  | { t: 'event'; kind: 'minigame_start'; id: string; name: string; tagline: string }
+  | { t: 'event'; kind: 'minigame_end'; id: string; scores: { playerId: string; score: number }[] }
+  | { t: 'event'; kind: 'mg_sync' }
+  | { t: 'event'; kind: 'winner'; playerIds: string[] }
 
 export type EventMsg = GameEvent
+
+export type GameMode = 'mansion' | 'ritual'
+
+/* ------------------------------------------------------------------ */
+/* Mansion board views                                                 */
+/* ------------------------------------------------------------------ */
+
+export type PlayerStatus = 'alive' | 'ghost'
+export type SpaceType =
+  | 'start'
+  | 'soul'
+  | 'item'
+  | 'mystery'
+  | 'curse'
+  | 'horror'
+  | 'shortcut'
+  | 'safe'
+
+export interface MatchPlayer {
+  id: string
+  name: string
+  connected: boolean
+  pos: number
+  souls: number
+  status: PlayerStatus
+  itemCount: number
+  curses: string[]
+  isTurn: boolean
+}
+
+export interface MgPublic {
+  id: string
+  name: string
+  tagline: string
+  controlsHint?: string
+  durationMs?: number
+  endsAt?: number | null
+  publicState?: Record<string, unknown>
+  results?: MgResultRow[]
+}
+
+export interface MgResultRow {
+  playerId: string
+  score: number
+  note: string
+  soulsDelta: number
+}
+
+/** Public board state — identical for TV and every phone. */
+export interface MatchView {
+  order: string[]
+  currentPlayerId: string | null
+  turnCount: number
+  totalTurns: number
+  stage: number
+  stageName: string
+  awaiting: 'roll' | 'move' | 'haunt' | null
+  turnDeadline: number | null
+  players: MatchPlayer[]
+  lastRoll: { playerId: string; value: number; effective: number } | null
+  lastSpace: { pos: number; type: SpaceType; name: string } | null
+  log: { line: string; at: number }[]
+  mg: MgPublic | null
+  results: {
+    rows: { playerId: string; souls: number; status: PlayerStatus }[]
+    winnerIds: string[]
+  } | null
+  now: number
+}
+
+export interface MatchPrivate {
+  pos: number
+  souls: number
+  status: PlayerStatus
+  items: string[]
+  curses: string[]
+  isMyTurn: boolean
+  awaitingMe: 'roll' | 'move' | 'haunt' | null
+  privateMg?: Record<string, unknown>
+  rank?: number
+  won?: boolean
+  epilogue?: string
+}
 
 export interface ErrorMsg {
   t: 'error'

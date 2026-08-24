@@ -17,14 +17,19 @@ import { QrPanel } from './QrPanel'
 import { ErrorToast } from './ErrorToast'
 import {
   HOW_TO_PLAY,
+  HOW_TO_PLAY_MANSION,
   INTRO_NARRATION,
   LOBBY_WHISPERS,
   PHASE_LABELS,
 } from '@/data/whisper'
+import { MansionBoard } from './board/MansionBoard'
+import { TvMinigame } from './board/TvMinigame'
+import { ResultsCinema } from './board/ResultsCinema'
 
 const ROUND_OPTIONS = [45, 60, 75, 90]
 const VOTE_OPTIONS = [25, 40, 60]
 const ROUNDS_OPTIONS = [2, 3, 4]
+const LAPS_OPTIONS = [2, 3, 4]
 
 export function TvStage({ game }: { game: WhisperGame }) {
   const tv = game.tvView
@@ -131,6 +136,28 @@ function Stage({ tv, game }: { tv: TvView; game: WhisperGame }) {
     audio.setDread(Math.min(1, tv.publicStats.dread))
   }, [tv.publicStats.dread, audio])
 
+  const isMansion = tv.settings.mode === 'mansion'
+
+  if (isMansion && (tv.phase === 'board_intro' || tv.phase === 'board' || tv.phase === 'minigame_intro' || tv.phase === 'minigame_results')) {
+    return (
+      <>
+        {tv.match ? <MansionBoard tv={tv} game={game} /> : null}
+        <HostBar game={game} phase={tv.phase} />
+      </>
+    )
+  }
+  if (isMansion && tv.phase === 'minigame' && tv.match?.mg) {
+    return (
+      <>
+        <TvMinigame mg={tv.match.mg} players={tv.match.players} now={tv.now} />
+        <HostBar game={game} phase={tv.phase} />
+      </>
+    )
+  }
+  if (isMansion && tv.phase === 'results') {
+    return tv.match ? <ResultsCinema match={tv.match} /> : null
+  }
+
   if (tv.phase === 'ending') return <EndingCinema tv={tv} game={game} />
   return (
     <>
@@ -167,8 +194,10 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
   const [settings, setSettings] = useState<RoomSettings>(tv.settings)
   const joinUrl =
     typeof window === 'undefined' ? '' : `${window.location.origin}/?code=${tv.code}`
-  const canStart = tv.players.length >= 3 && tv.players.length <= 8
+  const isMansion = settings.mode === 'mansion'
+  const canStart = tv.players.length >= 2 && tv.players.length <= 8
   const whisper = useRotating(LOBBY_WHISPERS, 4200)
+  const howTo = isMansion ? HOW_TO_PLAY_MANSION : HOW_TO_PLAY
 
   return (
     <main className="relative z-10 flex min-h-dvh flex-col p-10 pb-24">
@@ -181,7 +210,7 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
         <div>
           <QrPanel url={joinUrl} code={tv.code} />
           <p className="mt-4 text-center text-xs uppercase tracking-widest2 text-bone-faint">
-            {tv.players.length} / 8 seated · need at least 3
+            {tv.players.length} / 8 seated · need at least 2
           </p>
         </div>
 
@@ -214,29 +243,49 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
 
           <div className="mt-8 grid grid-cols-3 gap-8">
             <Segmented
-              label="Whisper rounds"
-              options={ROUNDS_OPTIONS}
-              value={settings.rounds}
-              onChange={(rounds) => setSettings((s) => ({ ...s, rounds }))}
+              label="Night"
+              options={['mansion', 'ritual'] as const}
+              value={settings.mode}
+              onChange={(mode) => setSettings((s) => ({ ...s, mode }))}
+              format={(v) => (v === 'mansion' ? 'MANSION' : 'SÉANCE')}
             />
-            <Segmented
-              label="Seconds per round"
-              options={ROUND_OPTIONS}
-              value={settings.roundSeconds}
-              onChange={(roundSeconds) => setSettings((s) => ({ ...s, roundSeconds }))}
-              suffix="s"
-            />
-            <Segmented
-              label="Vote time"
-              options={VOTE_OPTIONS}
-              value={settings.voteSeconds}
-              onChange={(voteSeconds) => setSettings((s) => ({ ...s, voteSeconds }))}
-              suffix="s"
-            />
+            {isMansion ? (
+              <Segmented
+                label="Board laps"
+                options={LAPS_OPTIONS}
+                value={settings.laps}
+                onChange={(laps) => setSettings((s) => ({ ...s, laps }))}
+              />
+            ) : (
+              <>
+                <Segmented
+                  label="Whisper rounds"
+                  options={ROUNDS_OPTIONS}
+                  value={settings.rounds}
+                  onChange={(rounds) => setSettings((s) => ({ ...s, rounds }))}
+                />
+                <Segmented
+                  label="Seconds per round"
+                  options={ROUND_OPTIONS}
+                  value={settings.roundSeconds}
+                  onChange={(roundSeconds) => setSettings((s) => ({ ...s, roundSeconds }))}
+                  suffix="s"
+                />
+              </>
+            )}
+            {!isMansion ? (
+              <Segmented
+                label="Vote time"
+                options={VOTE_OPTIONS}
+                value={settings.voteSeconds}
+                onChange={(voteSeconds) => setSettings((s) => ({ ...s, voteSeconds }))}
+                suffix="s"
+              />
+            ) : null}
           </div>
 
           <ul className="mt-8 space-y-1.5 text-sm leading-relaxed text-bone-dim">
-            {HOW_TO_PLAY.map((line, i) => (
+            {howTo.map((line, i) => (
               <li key={i} className="before:mr-2 before:text-blood before:content-['✦']">
                 {line}
               </li>
@@ -249,7 +298,8 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
               onClick={() => game.actions.startGame(settings)}
               className="wsp-btn-primary w-full max-w-md !py-5 text-lg tracking-widest disabled:cursor-not-allowed disabled:opacity-30"
             >
-              <Play size={20} className="inline" /> BEGIN THE SÉANCE
+              <Play size={20} className="inline" />{' '}
+              {isMansion ? 'ENTER THE MANSION' : 'BEGIN THE SÉANCE'}
             </button>
           </div>
         </div>
@@ -259,18 +309,20 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
   )
 }
 
-function Segmented<T extends number>({
+function Segmented<T extends string | number>({
   label,
   options,
   value,
   onChange,
   suffix = '',
+  format,
 }: {
   label: string
-  options: T[]
-  value: number
+  options: readonly T[]
+  value: T
   onChange: (v: T) => void
   suffix?: string
+  format?: (v: T) => string
 }) {
   return (
     <div>
@@ -278,15 +330,14 @@ function Segmented<T extends number>({
       <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-bone-faint/25">
         {options.map((o) => (
           <button
-            key={o}
+            key={String(o)}
             onClick={() => onChange(o)}
             className={cn(
               'px-4 py-2 font-display text-lg transition-colors',
               value === o ? 'bg-blood/80 text-bone' : 'text-bone-dim hover:bg-white/5'
             )}
           >
-            {o}
-            {suffix}
+            {format ? format(o) : `${o}${suffix}`}
           </button>
         ))}
       </div>
