@@ -30,7 +30,9 @@ export interface ToastError {
  */
 export function useWhisperGame() {
   const url = resolveSocketUrl()
-  const { socketRef, connState, generation } = useWhisperSocket(url, false)
+  // Auto-connect on mount: pages gate their UI on connState === 'open',
+  // and actions like tv_create/join queue behind the opening handshake.
+  const { socketRef, connState, generation } = useWhisperSocket(url)
   const send = useSender(socketRef)
 
   const [welcome, setWelcome] = useState<WelcomeMsg | null>(null)

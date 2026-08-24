@@ -65,10 +65,14 @@ function PreLobby({ game, children }: { game: WhisperGame; children?: React.Reac
         </p>
         <button
           onClick={() => game.actions.createRoom()}
-          disabled={game.connState !== 'open'}
+          disabled={game.connState === 'connecting'}
           className="wsp-btn-primary mt-10 !px-10 !py-4 text-base tracking-widest disabled:opacity-40"
         >
-          LIGHT THE CANDLES
+          {game.connState === 'connecting'
+            ? 'KNOCKING…'
+            : game.connState === 'open'
+              ? 'LIGHT THE CANDLES'
+              : 'REACH FOR THE HOUSE'}
         </button>
         {children}
       </div>

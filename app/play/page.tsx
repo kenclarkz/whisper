@@ -8,7 +8,6 @@ import { Atmosphere, ConnDot } from '@/components/Atmosphere'
 import { ErrorToast } from '@/components/ErrorToast'
 import { useWhisperGame } from '@/lib/whisper/useWhisper'
 import { getAudio } from '@/lib/whisper/audio'
-import type { ConnState } from '@/lib/whisper/client'
 
 const CLOSED_COPY: Record<string, string> = {
   room_closed: 'The house has moved on. The ritual is over.',
@@ -69,7 +68,14 @@ export default function PlayPage() {
   return (
     <main className="relative z-10 flex min-h-dvh flex-col items-center justify-center px-6 py-14">
       <Atmosphere />
-      {game.connState === 'open' ? (
+      {game.connState === 'connecting' ? (
+        <>
+          <ConnDot state="connecting" />
+          <p className="mt-4 animate-breathe text-sm uppercase tracking-widest2 text-bone-faint">
+            KNOCKING…
+          </p>
+        </>
+      ) : (
         <>
           <h1 className="mb-10 font-display text-3xl tracking-widest2">TAKE YOUR SEAT</h1>
           <JoinForm
@@ -78,13 +84,6 @@ export default function PlayPage() {
             onJoin={game.actions.join}
           />
           <ErrorToast game={game} />
-        </>
-      ) : (
-        <>
-          <ConnDot state={game.connState as ConnState} />
-          <p className="mt-4 animate-breathe text-sm uppercase tracking-widest2 text-bone-faint">
-            KNOCKING…
-          </p>
         </>
       )}
     </main>
