@@ -319,3 +319,45 @@ test('mansion over the wire: start → board → roll → events flow', async ()
   tv.ws.close()
   for (const p of players) p.ws.close()
 })
+
+test('house bots over the wire: TV seats them, phones cannot, solo match completes', async () => {
+  const tv = await connect()
+  send(tv, { t: 'tv_create' })
+  const code = (await next(tv, 'welcome')).code
+  await next(tv, 'room')
+
+  /* --- the TV seats a house bot with one message --------------------- */
+  send(tv, { t: 'add_bot' })
+  const botLobby = await next(
+    tv,
+    'room',
+    (m) => m.view.players.length === 1 && m.view.players[0].bot === true
+  )
+  const botId = botLobby.view.players[0].id
+
+  /* --- phones are refused -------------------------------------------- */
+  const phone = await connect()
+  send(phone, { t: 'player_join', code, name: 'Ada' })
+  await next(phone, 'welcome')
+  await next(phone, 'room')
+  send(phone, { t: 'add_bot' })
+  assert.equal((await next(phone, 'error')).code, 'forbidden')
+
+  /* --- solo start: one human + one bot is enough ---------------------- */
+  send(tv, { t: 'start', settings: { mode: 'mansion', laps: 2 } })
+  await next(tv, 'event', (m) => m.kind === 'game_start' && m.mode === 'mansion')
+  assert.equal(latestRoom(tv).match.totalTurns, 4)
+  assert.ok(latestRoom(tv).players.find((p) => p.id === botId)?.bot)
+
+  /* --- the bot plays without any socket of its own -------------------- */
+  hub.stepMansion(code, 10 * 60_000)
+  await new Promise((r) => setTimeout(r, 60))
+
+  const finalView = latestRoom(tv)
+  assert.equal(finalView.phase, 'results')
+  assert.equal(finalView.match.results.rows.length, 2)
+  assert.ok(finalView.match.results.winnerIds.length >= 1)
+
+  tv.ws.close()
+  phone.ws.close()
+})

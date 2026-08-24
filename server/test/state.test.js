@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   createRoom,
   addPlayer,
+  addBot,
   startGame,
   openWhisper,
   chunkWhisper,
@@ -59,6 +60,42 @@ describe('rooms & joining', () => {
     const { room } = setup(3)
     startRitual(room)
     assert.equal(addPlayer(room, 'Late').error, 'game_in_progress')
+  })
+
+  it('seats house bots with unique names and flags them publicly', () => {
+    const room = createRoom('TEST')
+    addPlayer(room, 'Wick') // collides with the first bot name on purpose
+    const a = addBot(room)
+    assert.equal(a.error, undefined)
+    assert.equal(a.player.bot, true)
+    assert.notEqual(a.player.name.toLowerCase(), 'wick')
+    const b = addBot(room)
+    assert.notEqual(a.player.name, b.player.name)
+
+    // Bots are visible in both views (so the lobby can badge them).
+    for (const view of [tvView(room), playerView(room, a.player)]) {
+      assert.ok(view.players.find((p) => p.id === a.player.id).bot === true)
+    }
+  })
+
+  it('refuses bot seats once the night has begun', () => {
+    const { room } = setup(2)
+    startGame(room, { mode: 'mansion' })
+    assert.equal(addBot(room).error, 'game_in_progress')
+  })
+
+  it('the séance refuses house bots; the mansion seats them gladly', () => {
+    const seance = createRoom('T1')
+    addPlayer(seance, 'Ada')
+    addPlayer(seance, 'Bram')
+    addBot(seance)
+    assert.equal(startGame(seance, { mode: 'ritual' }).error, 'bots_forbidden')
+
+    const board = createRoom('T2')
+    addPlayer(board, 'Ada')
+    addBot(board)
+    assert.ok(startGame(board, { mode: 'mansion' }).player === undefined)
+    assert.ok(board.match)
   })
 })
 

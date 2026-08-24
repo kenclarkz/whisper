@@ -32,11 +32,38 @@ import {
   MINIGAME_EVERY_TURNS,
   MATCH_TUNING,
 } from './content.js'
-import { MINIGAME_RUNTIMES, mgPublicState } from './minigames.js'
+import { MINIGAME_RUNTIMES, mgPublicState, eyeIsOpen } from './minigames.js'
 
 const d6 = () => 1 + Math.floor(Math.random() * 6)
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
 const clampSouls = (n) => Math.max(0, Math.min(99, n))
+
+/* ------------------------------------------------------------------ */
+/* House bots                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Bots are seated from the TV lobby so a lone player can fill the table.
+ * Everything they do happens inside mansionTick — no sockets of their own:
+ *   - they answer the dice in seconds instead of idling 20s,
+ *   - they sometimes spend an item before rolling,
+ *   - ghost bots take the best haunt on offer,
+ *   - they play every minigame with simple heuristics.
+ */
+export const BOT_TUNING = {
+  rollMinMs: 1400,
+  rollMaxMs: 4200,
+  hauntDelayMs: 1800,
+  itemChance: 0.45,
+  voteDelayFrac: 0.35,
+  moveMinMs: 450,
+  moveMaxMs: 900,
+}
+
+const isBot = (room, playerId) =>
+  room.players.find((p) => p.id === playerId)?.bot === true
+
+const botRand = (min, max) => min + Math.random() * (max - min)
 
 function weightedMystery() {
   const total = MYSTERIES.reduce((n, m) => n + m.weight, 0)
@@ -154,7 +181,12 @@ function beginNextTurn(room, now) {
   m.currentIdx = (m.currentIdx + 1) % m.order.length
   m.currentPlayerId = m.order[m.currentIdx]
   m.awaiting = 'roll'
-  m.turnDeadline = now + MATCH_TUNING.turnIdleMs
+  // Bots answer quickly; humans get the full idle window.
+  m.turnDeadline =
+    now +
+    (isBot(room, m.currentPlayerId)
+      ? botRand(BOT_TUNING.rollMinMs, BOT_TUNING.rollMaxMs)
+      : MATCH_TUNING.turnIdleMs)
   m.lastRoll = null
   emit(room, { kind: 'turn_start', playerId: m.currentPlayerId })
 }
@@ -457,7 +489,13 @@ function resolveSpace(room, playerId, pos, depth, now) {
     const prey = alivePlayers(room).filter((p) => m.mp.get(p.id).pos === mp.pos)
     if (prey.length) {
       m.awaiting = 'haunt'
-      m.haunt = { playerId, deadline: now + MATCH_TUNING.hauntWindowMs }
+      m.haunt = {
+        playerId,
+        deadline: now + MATCH_TUNING.hauntWindowMs,
+        ...(isBot(room, playerId)
+          ? { botAt: now + BOT_TUNING.hauntDelayMs }
+          : {}),
+      }
       emit(room, { kind: 'haunt_offer', playerId, targets: prey.map((p) => p.id) })
       return
     }
@@ -743,6 +781,158 @@ export function mgInput(room, playerId, data, now = Date.now()) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Bot instincts                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Bots spend an item on their own turn before rolling (priority order). */
+function chooseBotItem(room, m, mp) {
+  const others = () =>
+    room.players
+      .filter((p) => p.id !== m.currentPlayerId)
+      .map((p) => ({ id: p.id, s: m.mp.get(p.id) }))
+      .filter((o) => o.s.status === 'alive')
+      .sort((a, b) => b.s.souls - a.s.souls)
+
+  if (mp.items.includes('voodoo_doll')) {
+    const t = others()[0]
+    if (t && t.s.souls > 0) return ['voodoo_doll', t.id]
+  }
+  if (mp.items.includes('snuffed_candle')) {
+    const pool = others()
+    if (pool.length) return ['snuffed_candle', pick(pool).id]
+  }
+  if (mp.items.includes('black_feather')) return ['black_feather', null]
+  if (mp.items.includes('iron_key')) return ['iron_key', null]
+  return null
+}
+
+/**
+ * Board-phase instincts for the bot on turn: maybe an item, then the
+ * shortened deadline auto-rolls for them.
+ */
+function botBoardTurn(room, m, now) {
+  if (m.awaiting !== 'roll') return
+  const pid = m.currentPlayerId
+  if (!isBot(room, pid)) return
+  const mp = m.mp.get(pid)
+  if (!mp || !mp.items.length) return
+  if (m._botItemCheck === m.turnCount) return // already made up its mind
+  m._botItemCheck = m.turnCount
+  if (Math.random() >= BOT_TUNING.itemChance) return // decided: hold onto them
+  const choice = chooseBotItem(room, m, mp)
+  if (choice) useItem(room, pid, choice[0], choice[1], now)
+}
+
+/** Ghost bots take the richest soul standing where they drift. */
+function botHauntChoice(room, m) {
+  const ghostId = m.haunt.playerId
+  const me = m.mp.get(ghostId)
+  if (!me) return null
+  const prey = room.players
+    .map((p) => ({ id: p.id, s: m.mp.get(p.id) }))
+    .filter((o) => o.id !== ghostId && o.s.status === 'alive' && o.s.pos === me.pos)
+    .sort((a, b) => b.s.souls - a.s.souls)
+  return prey[0]?.id ?? null
+}
+
+/** BFS through the maze bitmask grid — first step toward the exit. */
+function mazeFirstStep(state, from) {
+  const idx = (x, y) => y * state.w + x
+  const DIRS = [
+    [0, -1, 'up', 1],
+    [1, 0, 'right', 2],
+    [0, 1, 'down', 4],
+    [-1, 0, 'left', 8],
+  ]
+  const prev = new Map([[idx(from.x, from.y), null]])
+  const queue = [[from.x, from.y]]
+  while (queue.length) {
+    const [x, y] = queue.shift()
+    const cell = state.cells[idx(x, y)]
+    for (const [dx, dy, dir, bit] of DIRS) {
+      if (!(cell & bit)) continue
+      const nx = x + dx
+      const ny = y + dy
+      const key = idx(nx, ny)
+      if (prev.has(key)) continue
+      prev.set(key, { x, y, dir })
+      if (nx === state.exit.x && ny === state.exit.y) {
+        let node = prev.get(key)
+        while (prev.get(idx(node.x, node.y))) node = prev.get(idx(node.x, node.y))
+        return node.dir
+      }
+      queue.push([nx, ny])
+    }
+  }
+  return null
+}
+
+/** Feed every seated bot its minigame inputs for this tick. */
+function botMinigameInputs(room, m, now) {
+  const bots = room.players.filter((p) => p.bot)
+  if (!bots.length || !m.mgId) return
+  const def = MINIGAMES[m.mgId]
+
+  switch (def.kind) {
+    case 'taps':
+      for (const b of bots) {
+        const n = 2 + Math.floor(Math.random() * 3)
+        for (let i = 0; i < n; i++) mgInput(room, b.id, { type: 'tap' }, now)
+      }
+      break
+
+    case 'lanes':
+      for (const b of bots) {
+        const r = m.mgState.racers.get(b.id)
+        if (!r || r.caughtAt) continue
+        const wantRun = r.stamina > 28
+        if (wantRun !== r.running) {
+          mgInput(room, b.id, { type: wantRun ? 'run_on' : 'run_off' }, now)
+        }
+      }
+      break
+
+    case 'gated_taps': {
+      if (eyeIsOpen(m.mgState, now)) break
+      for (const b of bots) {
+        const n = 1 + Math.floor(Math.random() * 3)
+        for (let i = 0; i < n; i++) mgInput(room, b.id, { type: 'tap' }, now)
+      }
+      break
+    }
+
+    case 'secret_vote': {
+      const durationMs = def.durationMs ?? 15000
+      const elapsed = durationMs - Math.max(0, (room.phaseEndsAt ?? now) - now)
+      if (elapsed < durationMs * BOT_TUNING.voteDelayFrac) break
+      for (const b of bots) {
+        if (m.mgState.votes.has(b.id)) continue
+        const options = m.mgState.eligible.filter((id) => id !== b.id)
+        if (!options.length) continue
+        mgInput(room, b.id, { type: 'vote', targetId: pick(options) }, now)
+      }
+      break
+    }
+
+    case 'grid': {
+      const nextAt = (m._botMazeNext ??= new Map())
+      for (const b of bots) {
+        const p = m.mgState.pos.get(b.id)
+        if (!p || m.mgState.doneOrder.includes(b.id)) continue
+        if ((nextAt.get(b.id) ?? 0) > now) continue
+        nextAt.set(b.id, now + botRand(BOT_TUNING.moveMinMs, BOT_TUNING.moveMaxMs))
+        const dir = mazeFirstStep(m.mgState, p)
+        if (dir) mgInput(room, b.id, { type: 'move', dir }, now)
+      }
+      break
+    }
+
+    default:
+      break
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Tick & advance                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -765,6 +955,7 @@ export function mansionTick(room, now = Date.now()) {
       break
 
     case 'board': {
+      botBoardTurn(room, m, now)
       if (m.awaiting === 'roll' && m.turnDeadline && now >= m.turnDeadline) {
         // AFK insurance: the house rolls for you.
         rollDice(room, currentPlayerId(m), now)
@@ -772,11 +963,19 @@ export function mansionTick(room, now = Date.now()) {
       if (m.awaiting === 'move' && m.pendingMove && now >= m.pendingMove.nextAt) {
         stepOnce(room, now)
       }
-      if (m.awaiting === 'haunt' && m.haunt && now >= m.haunt.deadline) {
-        logLine(room, `${nameOf(room, currentPlayerId(m))} lets the moment pass.`)
-        m.awaiting = null
-        m.haunt = null
-        completeTurn(room, now)
+      if (m.awaiting === 'haunt' && m.haunt) {
+        const botTarget =
+          m.haunt.botAt != null && now >= m.haunt.botAt && isBot(room, m.haunt.playerId)
+            ? botHauntChoice(room, m)
+            : null
+        if (botTarget) {
+          haunt(room, m.haunt.playerId, botTarget, now)
+        } else if (now >= m.haunt.deadline) {
+          logLine(room, `${nameOf(room, currentPlayerId(m))} lets the moment pass.`)
+          m.awaiting = null
+          m.haunt = null
+          completeTurn(room, now)
+        }
       }
       break
     }
@@ -787,6 +986,7 @@ export function mansionTick(room, now = Date.now()) {
 
     case 'minigame': {
       let changed = false
+      botMinigameInputs(room, m, now)
       if (runtime?.tick) changed = Boolean(runtime.tick(m.mgState, now))
       if (changed) emit(room, { kind: 'mg_sync' })
       if (room.phaseEndsAt && now >= room.phaseEndsAt) finishMinigame(room, now)
@@ -863,6 +1063,7 @@ export function matchPublic(room, now = Date.now()) {
         id,
         name: p?.name ?? '?',
         connected: p?.connected ?? false,
+        bot: p?.bot === true,
         pos: s.pos,
         souls: s.souls,
         status: s.status,

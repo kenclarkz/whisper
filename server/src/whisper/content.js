@@ -16,6 +16,21 @@ export const LIMITS = {
 /** Room codes avoid visually ambiguous characters (no I, O, 0, 1). */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
+/**
+ * House bots fill empty seats so a lone player can still play the mansion.
+ * Names are picked in order and never collide with seated players.
+ */
+export const BOT_NAMES = [
+  'Wick',
+  'Marlow',
+  'Hex',
+  'Tomb',
+  'Vesper',
+  'Moth',
+  'Gallows',
+  'Bramble',
+]
+
 /** Single evocative words innocents must bait out of each other. */
 export const BAIT_WORDS = [
   'MIRROR', 'SALT', 'CANDLE', 'BASEMENT', 'ATTIC', 'DOLL', 'FUNERAL', 'RIVER',

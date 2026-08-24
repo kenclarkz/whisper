@@ -13,6 +13,7 @@ import {
   LIMITS,
   CODE_ALPHABET,
   BAIT_WORDS,
+  BOT_NAMES,
   SECRETS,
   OBJECTIVES,
   OMENS,
@@ -126,7 +127,7 @@ export function sanitizeSettings(input = {}) {
   return s
 }
 
-export function addPlayer(room, rawName) {
+export function addPlayer(room, rawName, { bot = false } = {}) {
   if (room.phase !== 'lobby') return { error: 'game_in_progress' }
   const name = cleanText(rawName, LIMITS.nameMax)
   if (name.length < LIMITS.nameMin) return { error: 'bad_name' }
@@ -140,6 +141,7 @@ export function addPlayer(room, rawName) {
     name,
     token: makeToken(),
     connected: false,
+    bot,
     role: null, // 'innocent' | 'whisperer'
     secret: '',
     baitWord: '',
@@ -153,6 +155,20 @@ export function addPlayer(room, rawName) {
   }
   room.players.push(player)
   return { player }
+}
+
+/**
+ * Seat a house bot from the TV lobby. Bots play the mansion board entirely
+ * server-side; the séance (ritual) mode refuses them — it needs living voices.
+ */
+export function addBot(room) {
+  if (room.phase !== 'lobby') return { error: 'game_in_progress' }
+  if (room.players.length >= LIMITS.maxPlayers) return { error: 'room_full' }
+  const taken = new Set(room.players.map((p) => p.name.toLowerCase()))
+  const name =
+    BOT_NAMES.find((n) => !taken.has(n.toLowerCase())) ??
+    `Bot ${room.players.length + 1}`
+  return addPlayer(room, name, { bot: true })
 }
 
 export function reclaimPlayer(room, token) {
@@ -183,6 +199,9 @@ export function startGame(room, settingsInput = {}) {
 
   if (room.settings.mode === 'mansion') {
     return createMansionMatch(room, room.settings)
+  }
+  if (room.players.some((p) => p.bot)) {
+    return { error: 'bots_forbidden' }
   }
   return startRitual(room)
 }
@@ -597,7 +616,7 @@ export function epilogueFor(player, outcome) {
 /* ------------------------------------------------------------------ */
 
 function publicPlayer(p) {
-  return { id: p.id, name: p.name, connected: p.connected }
+  return { id: p.id, name: p.name, connected: p.connected, bot: Boolean(p.bot) }
 }
 
 /**

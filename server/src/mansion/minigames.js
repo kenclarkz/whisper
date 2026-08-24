@@ -144,7 +144,7 @@ function buildEyeSchedule(durationMs, now) {
   return windows.map((w) => ({ ...w, from: w.from + now, to: w.to + now }))
 }
 
-function eyeIsOpen(state, now) {
+export function eyeIsOpen(state, now) {
   for (const w of state.schedule) {
     if (w.open && now >= w.from && now < w.to) return true
   }

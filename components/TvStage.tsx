@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Bot,
   Ghost,
   Play,
   RotateCcw,
@@ -210,8 +211,18 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
         <div>
           <QrPanel url={joinUrl} code={tv.code} />
           <p className="mt-4 text-center text-xs uppercase tracking-widest2 text-bone-faint">
-            {tv.players.length} / 8 seated · need at least 2
+            {tv.players.length} / 8 seated · need at least 2 — or seat a house
+            bot
           </p>
+          <div className="mt-3 flex justify-center">
+            <button
+              onClick={() => game.actions.addBot()}
+              disabled={tv.players.length >= 8}
+              className="inline-flex items-center gap-2 rounded-lg border border-bone-faint/30 px-4 py-2 text-xs uppercase tracking-widest2 text-bone-dim transition hover:border-blood hover:text-bone disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              <Bot size={14} /> Seat a house bot
+            </button>
+          </div>
         </div>
 
         <div className="flex min-w-0 flex-col">
@@ -228,10 +239,19 @@ function Lobby({ tv, game }: { tv: TvView; game: WhisperGame }) {
                 >
                   {p ? (
                     <>
-                      <UserRound size={22} className="mb-1.5 text-hex-light" />
+                      {p.bot ? (
+                        <Bot size={22} className="mb-1.5 text-blood" />
+                      ) : (
+                        <UserRound size={22} className="mb-1.5 text-hex-light" />
+                      )}
                       <span className="max-w-full truncate px-2 font-display text-lg">
                         {p.name}
                       </span>
+                      {p.bot ? (
+                        <span className="mt-0.5 text-[10px] uppercase tracking-widest2 text-blood">
+                          house bot
+                        </span>
+                      ) : null}
                     </>
                   ) : (
                     <Ghost size={18} className="text-bone-faint/30" />

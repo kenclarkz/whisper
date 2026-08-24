@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import {
   createRoom,
   addPlayer,
+  addBot,
   startGame,
 } from '../src/whisper/state.js'
 import {
@@ -22,8 +23,9 @@ import {
   mansionTick,
   matchPublic,
   matchPrivate,
+  BOT_TUNING,
 } from '../src/mansion/engine.js'
-import { BOARD } from '../src/mansion/content.js'
+import { BOARD, MATCH_TUNING } from '../src/mansion/content.js'
 import { buildMaze, MAZE_SIZE } from '../src/mansion/minigames.js'
 
 const TICK = 500
@@ -364,6 +366,119 @@ describe('full mansion matches', () => {
     assert.equal(pub.results.rows.length, 8)
     const top = pub.results.rows[0].souls
     assert.ok(pub.results.winnerIds.every((id) => pub.results.rows.find((r) => r.playerId === id)?.souls === top))
+  })
+})
+
+describe('solo play with house bots', () => {
+  function setupSolo(laps = 2) {
+    const room = createRoom('SOLO')
+    const { player: human } = addPlayer(room, 'Ada')
+    human.connected = true
+    const res = addBot(room)
+    assert.equal(res.error, undefined)
+    assert.equal(res.player.bot, true)
+    const started = startGame(room, { mode: 'mansion', laps })
+    assert.equal(started.error, undefined)
+    return { room, human, bot: res.player }
+  }
+
+  it('a lone human plus one bot reaches results with both seats counted', () => {
+    const { room } = setupSolo(1)
+    sweep(room, 10 * 60_000)
+    assert.equal(room.phase, 'results')
+    const pub = matchPublic(room)
+    assert.equal(pub.results.rows.length, 2)
+    assert.ok(pub.results.winnerIds.length >= 1)
+  })
+
+  it('answers the dice in seconds instead of idling out the turn window', () => {
+    const { room, human, bot } = setupSolo(2)
+    room.match.order = [bot.id, human.id] // the bot opens the night
+    const tBoard = sweep(room, 6000) // board intro
+    assert.equal(room.match.currentPlayerId, bot.id)
+
+    // The deadline handed to a bot seat is seconds away, not the human window.
+    const deadline = room.match.turnDeadline
+    assert.ok(deadline - tBoard <= BOT_TUNING.rollMaxMs + TICK)
+
+    // And the house indeed rolls for the bot inside that window.
+    sweepUntil(room, 10_000, (r) => r.match.awaiting === 'move', tBoard)
+    assert.equal(room.match.awaiting, 'move')
+  })
+
+  it('ghost bots take the best haunt on offer by themselves', () => {
+    const { room, human, bot } = setupSolo(2)
+    let t = sweep(room, 6000)
+    const m = room.match
+    const hm = m.mp.get(human.id)
+    const bm = m.mp.get(bot.id)
+    bm.status = 'ghost'
+    bm.souls = 0
+    hm.pos = bm.pos
+    hm.souls = 3
+
+    m.currentPlayerId = bot.id
+    m.awaiting = 'haunt'
+    m.haunt = {
+      playerId: bot.id,
+      deadline: t + MATCH_TUNING.hauntWindowMs,
+      botAt: t + BOT_TUNING.hauntDelayMs,
+    }
+
+    sweepUntil(room, 10_000, (r) => r.match.awaiting !== 'haunt', t)
+    assert.equal(hm.souls, 2, 'the ghost stole a soul unprompted')
+    assert.equal(bm.souls, 1)
+  })
+
+  it('bots spend an item before rolling when the odds favor it', () => {
+    const originalChance = BOT_TUNING.itemChance
+    BOT_TUNING.itemChance = 1 // deterministic for this test
+    try {
+      const { room, human, bot } = setupSolo(2)
+      const m = room.match
+      m.order = [bot.id, human.id]
+      let t = sweep(room, 6000)
+      assert.equal(m.currentPlayerId, bot.id)
+      m.mp.get(bot.id).items.push('iron_key')
+      m.mp.get(bot.id).pos = 9
+
+      t = sweepUntil(room, 15_000, (r) => r.match.awaiting === 'move', t)
+      assert.equal(m.mp.get(bot.id).pos, 11, 'iron key walked the bot to the Chapel before its roll')
+    } finally {
+      BOT_TUNING.itemChance = originalChance
+    }
+  })
+
+  it('bots play minigames instead of sitting them out', () => {
+    const { room, human, bot } = setupSolo(3)
+    room.match.mgBag = ['candle']
+    let t = sweep(room, 6000) // board intro
+    for (let i = 0; i < 3; i++) {
+      stepOnto(room, 4, t)
+      t += TICK
+    }
+    stepOnto(room, 4, t) // turn four ends → minigame_intro
+    t = sweepUntil(room, 8000, (r) => r.phase === 'minigame', t)
+    assert.equal(room.match.mgId, 'candle')
+
+    // The human never touches their phone; the bot taps on its own.
+    t = sweepUntil(room, 30_000, (r) => r.phase === 'minigame_results', t)
+    const rows = room.match.mgResults
+    const botRow = rows.find((row) => row.playerId === bot.id)
+    assert.ok(botRow && botRow.score > 0, 'bot earned a real candle score')
+    assert.ok(
+      !rows.some((row) => row.playerId === human.id && row.score >= botRow.score),
+      'the idle human did not out-tap the bot'
+    )
+  })
+
+  it('public views flag bots so the lobby can badge them', () => {
+    const { room, bot } = setupSolo(2)
+    sweep(room, 6000)
+    const pub = matchPublic(room)
+    const row = pub.players.find((p) => p.id === bot.id)
+    assert.equal(row.bot, true)
+    assert.equal(pub.players.find((p) => p.bot !== true).bot, false)
   })
 })
 

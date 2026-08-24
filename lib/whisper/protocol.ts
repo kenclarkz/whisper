@@ -15,6 +15,7 @@
 export type ClientMessage =
   | { t: 'tv_create'; settings?: Partial<RoomSettings> }
   | { t: 'player_join'; code?: string; name?: string; token?: string }
+  | { t: 'add_bot' }
   | { t: 'start'; settings?: Partial<RoomSettings> }
   | { t: 'advance' }
   | { t: 'play_again' }
@@ -78,6 +79,8 @@ export interface PublicPlayer {
   id: string
   name: string
   connected: boolean
+  /** House bot seated from the TV lobby (mansion mode only). */
+  bot: boolean
 }
 
 export interface Outcome {
@@ -255,6 +258,7 @@ export interface MatchPlayer {
   id: string
   name: string
   connected: boolean
+  bot: boolean
   pos: number
   souls: number
   status: PlayerStatus

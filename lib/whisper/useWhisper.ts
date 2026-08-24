@@ -179,6 +179,7 @@ export function useWhisperGame() {
 
   /* ---------------- mansion board actions ---------------- */
 
+  const addBot = useCallback(() => send({ t: 'add_bot' }), [send])
   const roll = useCallback(() => send({ t: 'roll' }), [send])
   const mgInput = useCallback(
     (data: MgInputData) => send({ t: 'mg_input', data }),
@@ -231,6 +232,7 @@ export function useWhisperGame() {
       forge,
       castVote,
       roll,
+      addBot,
       mgInput,
       useItem,
       haunt,

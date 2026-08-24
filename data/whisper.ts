@@ -43,5 +43,6 @@ export const HOW_TO_PLAY_MANSION = [
   'Every few turns, all phones play a game against each other for souls.',
   'Items help. Curses hinder. Safe Rooms shelter everyone inside.',
   'When you fall, you drift as a ghost and haunt whoever shares your room.',
+  'Playing alone? Seat a house bot from the lobby and it will play against you.',
   'After the last turn, whoever escapes richest owns the night.',
 ]

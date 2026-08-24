@@ -17,6 +17,7 @@ import {
   generateCode,
   sanitizeSettings,
   addPlayer,
+  addBot,
   reclaimPlayer,
   findPlayer,
   startGame,
@@ -308,13 +309,31 @@ export function attachWhisperHub({ wss }) {
       if (!room || conn.kind !== 'tv') return error_(ws, 'forbidden', 'Only the shared screen starts the ritual.')
       const res = startGame(room, sanitizeSettings(msg?.settings))
       if (res.error) {
-        const messages = { need_players: `Gather ${LIMITS.minPlayers}–${LIMITS.maxPlayers} players first.` }
+        const messages = {
+          need_players: `Gather ${LIMITS.minPlayers}–${LIMITS.maxPlayers} players first.`,
+          bots_forbidden: 'The séance needs living voices — house bots cannot whisper.',
+        }
         return error_(ws, res.error, messages[res.error] ?? 'Cannot start.')
       }
       emitEvent(room, { kind: 'game_start', mode: room.settings.mode })
       if (room.match) {
         for (const ev of drainEvents(room.match)) emitEvent(room, { ...ev })
       }
+      syncRoom(room)
+    },
+
+    add_bot(ws, conn) {
+      const room = roomOf(conn)
+      if (!room || conn.kind !== 'tv') return error_(ws, 'forbidden', 'Only the shared screen seats a house bot.')
+      const res = addBot(room)
+      if (res.error) {
+        const messages = {
+          game_in_progress: 'The night has already begun.',
+          room_full: 'The table seats eight.',
+        }
+        return error_(ws, res.error, messages[res.error] ?? 'Cannot seat a house bot.')
+      }
+      logger.info(`house bot ${res.player.name} seated in ${room.code}`)
       syncRoom(room)
     },
 
