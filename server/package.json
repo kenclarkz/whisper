@@ -1,0 +1,21 @@
+{
+  "name": "whisper-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WHISPER game server — server-authoritative rooms over WebSockets.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

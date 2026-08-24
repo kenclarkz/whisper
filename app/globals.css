@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: 'Cinzel', 'Times New Roman', serif;
+  --font-sans: 'Jost', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-void text-bone font-sans antialiased;
+  overscroll-behavior-y: none;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(163, 22, 33, 0.55);
+  color: #fff;
+}
+
+input {
+  font-size: 16px; /* stop iOS zoom-on-focus */
+}
+
+/* ------------------------------------------------------------------ */
+/* Atmosphere layers                                                   */
+/* ------------------------------------------------------------------ */
+
+.vignette {
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.78) 100%);
+}
+
+.grain-heavy {
+  pointer-events: none;
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain-shift 0.9s steps(4) infinite;
+}
+
+@keyframes grain-shift {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-2%, 1.5%); }
+  50% { transform: translate(1.5%, -1%); }
+  75% { transform: translate(-1%, -2%); }
+}
+
+.blood-pulse {
+  animation: blood-pulse 3.2s ease-in-out infinite;
+}
+@keyframes blood-pulse {
+  0%, 100% { box-shadow: inset 0 0 90px 10px rgba(92, 14, 20, 0); }
+  50% { box-shadow: inset 0 0 140px 30px rgba(92, 14, 20, 0.35); }
+}
+
+.text-shadow-cine {
+  text-shadow:
+    0 0 24px rgba(227, 226, 208, 0.18),
+    0 2px 40px rgba(0, 0, 0, 0.9);
+}
+
+.candle-glow {
+  text-shadow:
+    0 0 8px rgba(255, 176, 88, 0.5),
+    0 0 34px rgba(224, 52, 44, 0.28),
+    0 2px 26px rgba(0, 0, 0, 0.85);
+}
+
+/* ------------------------------------------------------------------ */
+/* Components                                                          */
+/* ------------------------------------------------------------------ */
+
+.wsp-input {
+  @apply w-full rounded-lg border border-bone-faint/40 bg-black/40 px-4 py-3
+    font-sans text-lg tracking-wide text-bone placeholder:text-bone-faint/70
+    outline-none transition-colors focus:border-blood-bright/70 focus:bg-black/60;
+}
+
+.wsp-btn {
+  @apply select-none rounded-xl border px-6 py-4 font-sans uppercase tracking-widest2
+    transition-all duration-300 active:scale-[0.97];
+}
+.wsp-btn-primary {
+  @apply wsp-btn border-blood/70 bg-blood-dark/40 text-bone
+    hover:border-blood-bright hover:bg-blood/50;
+}
+.wsp-btn-ghost {
+  @apply wsp-btn border-transparent bg-white/[0.04] text-bone-dim
+    hover:bg-white/[0.08] hover:text-bone;
+}
+
+.card-seal {
+  background: linear-gradient(160deg, rgba(21, 16, 25, 0.92), rgba(7, 5, 8, 0.96));
+  border: 1px solid rgba(232, 224, 208, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(232, 224, 208, 0.06),
+    0 18px 60px rgba(0, 0, 0, 0.65);
+}
+
+/* Countdown ring */
+.ring-track {
+  stroke: rgba(232, 224, 208, 0.12);
+}
+.ring-fill {
+  stroke: #e0342c;
+  filter: drop-shadow(0 0 6px rgba(224, 52, 44, 0.7));
+  transition: stroke-dashoffset 0.25s linear;
+}
+
+/* Phone safe areas */
+.safe-pad {
+  padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+}
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 0.75rem);
+}
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 1.25rem);
+}
+
+/* Cinematic line reveal (TV intro) */
+.fade-in-slow {
+  animation: fade-in-slow 2.4s ease both;
+}
+@keyframes fade-in-slow {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain-heavy,
+  .blood-pulse,
+  .fade-in-slow,
+  .animate-flicker,
+  .animate-breathe,
+  .animate-drift-up,
+  .animate-glitch,
+  .animate-sway {
+    animation: none !important;
+  }
+}
